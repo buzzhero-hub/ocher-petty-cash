@@ -179,11 +179,28 @@ function pickPhoto(inp) {
       var c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       draft.photo = { b64: c.toDataURL('image/jpeg', 0.8).split(',')[1] };
-      var pn = document.getElementById('pn'); if (pn) pn.textContent = '写真を選びました';
+      var pn = document.getElementById('pn'); if (pn) pn.textContent = '写真を読み取っています…';
+      if (draft.kind === 'out') {
+        call('api_ocr', PASS, draft.photo.b64).then(applyOcr).catch(function () { var p2 = document.getElementById('pn'); if (p2) p2.textContent = '写真を選びました(自動読み取りはできませんでした)'; });
+      } else if (pn) pn.textContent = '写真を選びました';
     };
     img.src = r.result;
   };
   r.readAsDataURL(f);
+}
+function applyOcr(r) {
+  var d = draft; if (!d || d.kind !== 'out' || !r) return;
+  var got = [];
+  if (r.date) { d.date = r.date; got.push('日付'); }
+  if (r.shop && !d.shop) { d.shop = r.shop; got.push('支払先'); }
+  if (r.total && !d.total) { d.total = String(r.total); got.push('合計'); }
+  var s = (r.lines || []).reduce(function (x, l) { return x + l.amt; }, 0);
+  if (r.lines && r.lines.length && r.total && s === r.total && !sumOf(d.lines)) {
+    d.lines = r.lines.map(function (l) { return { what: l.tax === '8%' ? INIT.whats[0] : (INIT.whats[2] || INIT.whats[0]), other: '', tax: l.tax, amt: String(l.amt) }; });
+    got.push('明細');
+  } else if (r.total && d.lines.length === 1 && !d.lines[0].amt) { d.lines[0].amt = String(r.total); }
+  FLASH = got.length ? '写真から読み取りました(' + got.join('・') + ')。内容を必ず確認してください' : '写真から読み取れる項目がありませんでした';
+  if (TAB === 'rec' && STAGE === 'form') render();
 }
 function setErr(m) { var e = document.getElementById('err'); if (e) e.textContent = m; }
 function toConfirm() {
