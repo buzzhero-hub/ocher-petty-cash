@@ -27,7 +27,7 @@
   .card { border: 1px solid #e3e1d8; border-radius: 8px; padding: 4px 10px 10px; margin-bottom: 8px; }
   .muted { color: #6b6a63; font-size: 12px; }
   .err { color: #b3261e; font-size: 13px; min-height: 20px; margin: 6px 0; }
-  .ok { color: #1d6b33; background: #e8f4ec; border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-bottom: 8px; }
+  .ok { white-space: pre-line; color: #1d6b33; background: #e8f4ec; border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-bottom: 8px; }
   .lock { color: #8a5a00; background: #fdf3dc; padding: 6px 14px; font-size: 12px; }
   .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 4px; }
   .seg button { border-radius: 0; }
@@ -65,7 +65,7 @@
 var PASS = '', INIT = null, YM = '', TAB = 'rec', STAGE = 'form', FLASH = '', DATA = null, EDIT = null, CONFIRM_CANCEL = null, OPENPHOTO = {};
 var ME = lsGet('ocher_me') || '';
 var FILT = { me: false, who: '', q: '', rb: true };
-var draft = null, chk = null;
+var draft = null, chk = null, PENDING = [], PSEQ = 0;
 
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return ''; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -87,23 +87,49 @@ function call(fn) {
 }
 function opts(list, val) { return list.map(function (o) { return '<option' + (o === val ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join(''); }
 
+function todayStr() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function taxOpts(inv) { return inv ? ['10%', '8%', '非課税'] : ['登録番号なし10％', '登録番号なし8％', '非課税']; }
+function convTax(t, inv) {
+  if (inv) return t === '登録番号なし10％' ? '10%' : t === '登録番号なし8％' ? '8%' : t;
+  return t === '10%' ? '登録番号なし10％' : t === '8%' ? '登録番号なし8％' : t;
+}
+function invHtml(v) {
+  return '<div class="seg"><button class="' + (v ? 'on' : '') + '" onclick="setInv(true)">登録番号あり</button><button class="' + (!v ? 'on' : '') + '" onclick="setInv(false)">登録番号なし</button></div><div class="muted">レシートに「T」+13桁の登録番号があれば「あり」。ない場合は「なし」を選ぶと、税区分が「登録番号なし」になります</div>';
+}
+function setInv(v) { var o = curRoot(); o.inv = v; o.lines.forEach(function (l) { l.tax = convTax(l.tax, v); }); render(); }
 function newDraft() {
-  draft = { kind: 'out', date: INIT.today, who: ME || '', shop: '', total: '', lines: [{ what: INIT.whats[0], other: '', tax: '8%', amt: '' }], photo: null, inWhat: INIT.ins[0] || '', inAmt: '' };
+  draft = { kind: 'out', inv: true, date: todayStr(), who: ME || '', shop: '', total: '', lines: [{ what: INIT.whats[0], other: '', tax: '8%', amt: '' }], photo: null, inWhat: INIT.ins[0] || '', inAmt: '' };
 }
 
 /* ---------- 起動 ---------- */
+function setInit(r) { INIT = r; lsSet('ocher_init', JSON.stringify(r)); }
+function curYm() { var t = todayStr(); return t.slice(2, 4) + t.slice(5, 7); }
+function fillMonths() {
+  var sel = document.getElementById('mon');
+  sel.innerHTML = INIT.months.map(function (m) { return '<option value="' + m + '"' + (m === YM ? ' selected' : '') + '>20' + m.slice(0, 2) + '年' + Number(m.slice(2)) + '月</option>'; }).join('');
+}
 function start() {
   PASS = lsGet('ocher_pass') || '';
   if (!PASS) return login('');
-  call('api_init', PASS).then(function (r) { INIT = r; boot(); }).catch(function (e) { login(e.message); });
+  var cached = null;
+  try { cached = JSON.parse(lsGet('ocher_init') || 'null'); } catch (e) {}
+  if (cached && cached.months && cached.whats) { INIT = cached; boot(); refreshInit(); return; }
+  call('api_init', PASS).then(function (r) { setInit(r); boot(); }).catch(function (e) { login(e.message); });
+}
+function refreshInit() {
+  call('api_init', PASS).then(function (r) {
+    var changed = INIT.months.join() !== r.months.join();
+    setInit(r);
+    if (changed && YM) { if (r.months.indexOf(YM) < 0) YM = r.months[0]; fillMonths(); }
+  }).catch(function (e) { if (/パスコード/.test(e.message)) { lsSet('ocher_init', ''); login(e.message); } });
 }
 function login(msg) {
   document.getElementById('main').innerHTML = '<label class="l">パスコードを入力してください</label><input type="password" id="pw" inputmode="numeric"><div class="err">' + esc(msg) + '</div><button class="p w" onclick="doLogin()">開く</button>';
 }
-function doLogin() { PASS = document.getElementById('pw').value.trim(); lsSet('ocher_pass', PASS); start(); }
+function doLogin() { PASS = document.getElementById('pw').value.trim(); lsSet('ocher_pass', PASS); lsSet('ocher_init', ''); start(); }
 function boot() {
-  YM = INIT.months.indexOf(INIT.current) >= 0 ? INIT.current : INIT.months[0];
-  document.getElementById('mon').innerHTML = INIT.months.map(function (m) { return '<option value="' + m + '"' + (m === YM ? ' selected' : '') + '>20' + m.slice(0, 2) + '年' + Number(m.slice(2)) + '月</option>'; }).join('');
+  YM = INIT.months.indexOf(curYm()) >= 0 ? curYm() : INIT.months[0];
+  fillMonths();
   newDraft();
   loadMonth().then(function () { goTab('rec'); });
 }
@@ -142,6 +168,7 @@ function formHtml() {
     h += lab('金額(円)') + '<input type="number" inputmode="numeric" value="' + esc(d.inAmt) + '" oninput="draft.inAmt=this.value">';
   } else {
     h += lab('支払先') + '<input type="text" list="shops" value="' + esc(d.shop) + '" placeholder="ダイエー" oninput="draft.shop=this.value"><datalist id="shops">' + INIT.shops.map(function (s) { return '<option value="' + esc(s) + '">'; }).join('') + '</datalist>';
+    h += lab('適格請求書発行事業者(インボイス)') + invHtml(d.inv);
     h += lab('レシートの合計金額(円)') + '<input type="number" inputmode="numeric" value="' + esc(d.total) + '" oninput="draft.total=this.value;updSum()">';
     h += '<div class="muted" style="margin:12px 0 4px">明細(税区分ごとに分ける)</div>';
     d.lines.forEach(function (l, i) { h += lineHtml(l, i, 'draft', d.lines.length > 1, true); });
@@ -159,13 +186,13 @@ function lineHtml(l, i, root, canRemove, withTax) {
   var h = '<div class="card"><div class="between" style="align-items:center"><span class="muted">明細 ' + (i + 1) + '</span>' + (canRemove ? '<button class="s" onclick="rmLine(' + i + ')" aria-label="削除">×</button>' : '') + '</div>';
   h += '<select onchange="setWhat(' + i + ',this.value)">' + opts(whats, cur) + '</select>';
   if (isOther) h += '<input type="text" style="margin-top:6px" placeholder="支払内容" value="' + esc(l.other || (l.what === 'その他(自由入力)' ? '' : l.what)) + '" oninput="' + root + '.lines[' + i + '].other=this.value;' + root + '.lines[' + i + '].what=this.value||\'その他(自由入力)\'">';
-  h += '<div class="row2" style="margin-top:6px">' + (withTax ? '<select onchange="' + root + '.lines[' + i + '].tax=this.value">' + opts(INIT.taxes, l.tax) + '</select>' : '<div></div>') + '<input type="number" inputmode="numeric" placeholder="金額" value="' + esc(l.amt) + '" oninput="' + root + '.lines[' + i + '].amt=this.value;updSum()"></div></div>';
+  h += '<div class="row2" style="margin-top:6px">' + (withTax ? '<select onchange="' + root + '.lines[' + i + '].tax=this.value">' + opts(taxOpts((root === 'EDIT' ? EDIT : draft).inv), l.tax) + '</select>' : '<div></div>') + '<input type="number" inputmode="numeric" placeholder="金額" value="' + esc(l.amt) + '" oninput="' + root + '.lines[' + i + '].amt=this.value;updSum()"></div></div>';
   return h;
 }
 function curRoot() { return EDIT ? EDIT : draft; }
 function setWhat(i, v) { var o = curRoot(); o.lines[i].what = v; if (v !== 'その他(自由入力)') o.lines[i].other = ''; render(); }
 function setKind(k) { draft.kind = k; render(); }
-function addLine() { draft.lines.push({ what: INIT.whats[2] || INIT.whats[0], other: '', tax: '10%', amt: '' }); render(); }
+function addLine() { draft.lines.push({ what: INIT.whats[2] || INIT.whats[0], other: '', tax: convTax('10%', draft.inv), amt: '' }); render(); }
 function rmLine(i) { curRoot().lines.splice(i, 1); render(); }
 function sumOf(lines) { return lines.reduce(function (s, l) { return s + (Math.round(Number(l.amt)) || 0); }, 0); }
 function updSum() { var s = document.getElementById('sum'); if (s) s.textContent = yen(sumOf(draft.lines)); var e = document.getElementById('err'); if (e) e.textContent = ''; }
@@ -190,16 +217,22 @@ function pickPhoto(inp) {
 }
 function applyOcr(r) {
   var d = draft; if (!d || d.kind !== 'out' || !r) return;
-  var got = [];
+  var got = [], note = '';
   if (r.date) { d.date = r.date; got.push('日付'); }
   if (r.shop && !d.shop) { d.shop = r.shop; got.push('支払先'); }
   if (r.total && !d.total) { d.total = String(r.total); got.push('合計'); }
+  if (r.date || r.shop || r.total) {
+    d.inv = !!r.invoice;
+    d.lines.forEach(function (l) { l.tax = convTax(l.tax, d.inv); });
+    got.push(d.inv ? '登録番号あり' : '登録番号なし');
+    if (!d.inv) note = '登録番号(T+13桁)が見つからなかったので「登録番号なし」にしました。登録番号がある場合は「あり」に切り替えてください。';
+  }
   var s = (r.lines || []).reduce(function (x, l) { return x + l.amt; }, 0);
   if (r.lines && r.lines.length && r.total && s === r.total && !sumOf(d.lines)) {
-    d.lines = r.lines.map(function (l) { return { what: l.tax === '8%' ? INIT.whats[0] : (INIT.whats[2] || INIT.whats[0]), other: '', tax: l.tax, amt: String(l.amt) }; });
+    d.lines = r.lines.map(function (l) { return { what: l.tax === '8%' ? INIT.whats[0] : (INIT.whats[2] || INIT.whats[0]), other: '', tax: convTax(l.tax, d.inv), amt: String(l.amt) }; });
     got.push('明細');
   } else if (r.total && d.lines.length === 1 && !d.lines[0].amt) { d.lines[0].amt = String(r.total); }
-  FLASH = got.length ? '写真から読み取りました(' + got.join('・') + ')。内容を必ず確認してください' : '写真から読み取れる項目がありませんでした';
+  FLASH = got.length ? '写真から読み取りました(' + got.join('・') + ')。内容を必ず確認してください' + (note ? '\n' + note : '') : '写真から読み取れる項目がありませんでした';
   if (TAB === 'rec' && STAGE === 'form') render();
 }
 function setErr(m) { var e = document.getElementById('err'); if (e) e.textContent = m; }
@@ -218,7 +251,7 @@ function toConfirm() {
 }
 function confirmHtml() {
   var d = draft, total = d.kind === 'in' ? Math.round(Number(d.inAmt)) : sumOf(d.lines);
-  var h = '<div style="font-weight:600;margin:6px 0">この内容で記録します</div><div class="muted">' + esc(d.date) + ' / ' + esc(d.who) + (d.kind === 'out' ? ' / ' + esc(d.shop) : '') + '</div>';
+  var h = '<div style="font-weight:600;margin:6px 0">この内容で記録します</div><div class="muted">' + esc(d.date) + ' / ' + esc(d.who) + (d.kind === 'out' ? ' / ' + esc(d.shop) + ' / ' + (d.inv ? '登録番号あり' : '登録番号なし') : '') + '</div>';
   if (d.kind === 'in') h += '<div class="between" style="padding:8px 0;border-bottom:1px solid #e3e1d8"><span>' + esc(d.inWhat) + '</span><span>' + yen(total) + '</span></div>';
   else d.lines.forEach(function (l) { h += '<div class="between" style="padding:8px 0;border-bottom:1px solid #e3e1d8"><span>' + esc(l.what) + ' <span class="muted">' + esc(l.tax) + '</span></span><span>' + yen(l.amt) + '</span></div>'; });
   var after = d.kind === 'in' ? DATA.balance + total : DATA.balance - total;
@@ -227,21 +260,40 @@ function confirmHtml() {
   return h;
 }
 function commit() {
-  var d = draft, b = document.getElementById('go'); b.disabled = true; b.textContent = '送信中…';
-  var p = { kind: d.kind, date: d.date, who: d.who, shop: d.shop, total: d.total, photo: d.photo,
+  var d = draft, b = document.getElementById('go');
+  var p = { kind: d.kind, inv: d.inv, date: d.date, who: d.who, shop: d.shop, total: d.total, photo: d.photo,
     lines: d.kind === 'in' ? [{ what: d.inWhat, amt: d.inAmt }] : d.lines.map(function (l) { return { what: l.what, tax: l.tax, amt: l.amt }; }) };
+  var isIn = d.kind === 'in', who = d.who;
+  var fast = d.date.slice(2, 4) + d.date.slice(5, 7) === YM && !DATA.closed;
+  var mine = [];
+  if (fast) {
+    // 送信の完了を待たずに履歴へ進み、残高も先に更新する(失敗したら入力画面に戻す)
+    var bal = DATA.balance, day = Number(d.date.slice(8, 10)), rid = 'pending' + (++PSEQ);
+    mine = p.lines.map(function (l) {
+      var a = Math.round(Number(l.amt)); bal += isIn ? a : -a;
+      return { day: day, who: d.who, shop: isIn ? '' : d.shop.trim(), what: l.what, tax: isIn ? '' : l.tax, inn: isIn ? a : '', out: isIn ? '' : a, id: rid, rid: rid, photo: '', bal: bal };
+    });
+    PENDING = PENDING.concat(mine);
+    document.getElementById('bal').textContent = yen(bal);
+    newDraft(); draft.who = who; FLASH = '送信しています…'; goTab('hist');
+  } else { b.disabled = true; b.textContent = '送信中…'; }
   call('api_add', PASS, p).then(function (r) {
+    PENDING = PENDING.filter(function (x) { return mine.indexOf(x) < 0; });
     YM = r.ym; var sel = document.getElementById('mon'); if (!Array.prototype.some.call(sel.options, function (o) { return o.value === YM; })) { var o = document.createElement('option'); o.value = YM; o.textContent = '20' + YM.slice(0, 2) + '年' + Number(YM.slice(2)) + '月'; sel.insertBefore(o, sel.firstChild); }
-    sel.value = YM;
-    var who = d.who; newDraft(); draft.who = who;
-    return loadMonth().then(function () { FLASH = '記録しました。履歴で確認できます'; goTab('hist'); });
-  }).catch(function (e) { b.disabled = false; b.textContent = '記録する'; setErr(e.message); });
+    sel.value = YM; DATA = r.list; paintHeader();
+    if (!fast) { newDraft(); draft.who = who; FLASH = '記録しました。履歴で確認できます'; goTab('hist'); }
+    else { var show = TAB === 'hist' && !EDIT; FLASH = show ? '記録しました' : ''; if (show) render(); }
+  }).catch(function (e) {
+    PENDING = PENDING.filter(function (x) { return mine.indexOf(x) < 0; });
+    if (!fast) { b.disabled = false; b.textContent = '記録する'; return setErr(e.message); }
+    draft = d; loadMonth().then(function () { goTab('rec'); STAGE = 'confirm'; render(); setErr('記録できませんでした: ' + e.message); });
+  });
 }
 
 /* ---------- 履歴 ---------- */
 function groups() {
   var map = {}, order = [];
-  DATA.items.forEach(function (it) { if (!map[it.rid]) { map[it.rid] = []; order.push(it.rid); } map[it.rid].push(it); });
+  DATA.items.concat(PENDING).forEach(function (it) { if (!map[it.rid]) { map[it.rid] = []; order.push(it.rid); } map[it.rid].push(it); });
   return order.map(function (rid) { return map[rid]; }).reverse();
 }
 function histHtml() {
@@ -261,7 +313,8 @@ function histHtml() {
     h += '<div class="between"><b>' + esc(f.day) + '日 ' + esc(isIn ? (g[0].what) : f.shop) + '</b><b class="' + (isIn ? 'in' : '') + '">' + (isIn ? '+' : '') + yen(tot) + '</b></div>';
     if (!isIn) g.forEach(function (x) { h += '<div class="between muted"><span>' + esc(x.what) + (x.tax ? ' / ' + esc(x.tax) : '') + '</span>' + (g.length > 1 ? '<span>' + yen(x.out) + '</span>' : '') + '</div>'; });
     h += '<div class="between" style="align-items:center;margin-top:6px"><span class="muted">' + esc(f.who) + (FILT.rb ? ' / 残高 ' + yen(g[g.length - 1].bal) : '') + '</span>';
-    if (!DATA.closed) {
+    if (f.rid.indexOf('pending') === 0) h += '<span class="muted">送信中…</span>';
+    else if (!DATA.closed) {
       if (CONFIRM_CANCEL === f.rid) h += '<span><button class="s d" onclick="doCancel(\'' + f.rid + '\')">取り消す</button> <button class="s" onclick="CONFIRM_CANCEL=null;render()">やめる</button></span>';
       else h += '<span><button class="s" onclick="startEdit(\'' + f.rid + '\')">修正</button> <button class="s d" onclick="CONFIRM_CANCEL=\'' + f.rid + '\';render()">取消</button></span>';
     }
@@ -277,13 +330,14 @@ function showPhoto(rid) {
 }
 function startEdit(rid) {
   var g = DATA.items.filter(function (x) { return x.rid === rid; }), f = g[0], isIn = f.inn !== '';
-  EDIT = { rid: rid, isIn: isIn, day: f.day, shop: f.shop, lines: g.map(function (x) { return { id: x.id, what: x.what, other: '', tax: x.tax || '10%', amt: isIn ? x.inn : x.out }; }) };
+  var inv = !g.some(function (x) { return /^登録番号なし/.test(x.tax); });
+  EDIT = { rid: rid, isIn: isIn, inv: inv, day: f.day, shop: f.shop, lines: g.map(function (x) { return { id: x.id, what: x.what, other: '', tax: convTax(x.tax || '10%', inv), amt: isIn ? x.inn : x.out }; }) };
   FLASH = ''; render();
 }
 function editHtml() {
   var e = EDIT, h = '<div class="card" style="border-color:#8c8a80"><div class="muted" style="margin-top:6px">修正中</div>';
   h += lab('日(1〜31)') + '<input type="number" inputmode="numeric" value="' + esc(e.day) + '" oninput="EDIT.day=this.value">';
-  if (!e.isIn) h += lab('支払先') + '<input type="text" list="shops" value="' + esc(e.shop) + '" oninput="EDIT.shop=this.value">';
+  if (!e.isIn) h += lab('支払先') + '<input type="text" list="shops" value="' + esc(e.shop) + '" oninput="EDIT.shop=this.value">' + lab('適格請求書発行事業者(インボイス)') + invHtml(e.inv);
   e.lines.forEach(function (l, i) { h += lineHtml(l, i, 'EDIT', e.lines.length > 1, !e.isIn); });
   h += '<div class="err" id="err"></div><div class="row2"><button onclick="EDIT=null;render()">やめる</button><button class="p" onclick="saveEdit()">保存</button></div></div>';
   return h;
@@ -291,11 +345,11 @@ function editHtml() {
 function saveEdit() {
   var e = EDIT;
   for (var i = 0; i < e.lines.length; i++) if (!e.lines[i].what || e.lines[i].what === 'その他(自由入力)') return setErr('明細' + (i + 1) + 'の支払内容を入力してください');
-  call('api_saveReceipt', PASS, { ym: YM, rid: e.rid, day: e.day, shop: e.shop, editor: ME, lines: e.lines.map(function (l) { return { id: l.id, what: l.what, tax: l.tax, amt: l.amt }; }) })
-    .then(function () { EDIT = null; return loadMonth(); }).then(function () { FLASH = '修正しました。変更履歴に残しています'; render(); }).catch(function (er) { setErr(er.message); });
+  call('api_saveReceipt', PASS, { ym: YM, rid: e.rid, inv: e.isIn ? undefined : e.inv, day: e.day, shop: e.shop, editor: ME, lines: e.lines.map(function (l) { return { id: l.id, what: l.what, tax: l.tax, amt: l.amt }; }) })
+    .then(function (r) { EDIT = null; DATA = r.list; paintHeader(); FLASH = '修正しました。変更履歴に残しています'; render(); }).catch(function (er) { setErr(er.message); });
 }
 function doCancel(rid) {
-  call('api_cancel', PASS, YM, rid, ME).then(function () { CONFIRM_CANCEL = null; return loadMonth(); }).then(function () { FLASH = '取り消しました。残高に反映しています'; render(); }).catch(showErr);
+  call('api_cancel', PASS, YM, rid, ME).then(function (r) { CONFIRM_CANCEL = null; DATA = r.list; paintHeader(); FLASH = '取り消しました。残高に反映しています'; render(); }).catch(showErr);
 }
 
 /* ---------- 月次チェック ---------- */
