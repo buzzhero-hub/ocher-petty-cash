@@ -175,7 +175,7 @@ function formHtml() {
     h += '<button class="w" onclick="addLine()">+ 明細を追加</button>';
     h += '<div style="margin-top:10px;font-size:14px">明細の合計 <b id="sum"></b></div>';
   }
-  h += lab('領収書の写真') + '<input type="file" accept="image/*" onchange="pickPhoto(this)"><div class="muted" id="pn">' + (d.photo ? '写真を選びました' : '') + '</div>';
+  h += lab('領収書の写真') + (d.photo ? '<img class="photo" style="max-height:220px;object-fit:contain;background:#f1efe8" src="data:image/jpeg;base64,' + d.photo.b64 + '"><div class="between" style="align-items:center;margin-top:6px"><span class="muted" id="pn">写真を添付しました</span><button class="s" onclick="draft.photo=null;render()">撮り直す</button></div>' : '<input type="file" accept="image/*" onchange="pickPhoto(this)"><div class="muted" id="pn"></div>');
   h += '<div class="err" id="err"></div><button class="p w" onclick="toConfirm()">確認へ</button>';
   return h;
 }
@@ -206,10 +206,10 @@ function pickPhoto(inp) {
       var c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       draft.photo = { b64: c.toDataURL('image/jpeg', 0.8).split(',')[1] };
-      var pn = document.getElementById('pn'); if (pn) pn.textContent = '写真を読み取っています…';
+      render(); var pn = document.getElementById('pn'); if (pn) pn.textContent = draft.kind === 'out' ? '写真を読み取っています…' : '写真を添付しました';
       if (draft.kind === 'out') {
-        call('api_ocr', PASS, draft.photo.b64).then(applyOcr).catch(function () { var p2 = document.getElementById('pn'); if (p2) p2.textContent = '写真を選びました(自動読み取りはできませんでした)'; });
-      } else if (pn) pn.textContent = '写真を選びました';
+        call('api_ocr', PASS, draft.photo.b64).then(applyOcr).catch(function () { var p2 = document.getElementById('pn'); if (p2) p2.textContent = '写真を添付しました(自動読み取りはできませんでした)'; });
+      }
     };
     img.src = r.result;
   };
